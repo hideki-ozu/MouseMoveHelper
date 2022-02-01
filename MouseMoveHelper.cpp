@@ -16,10 +16,10 @@ HMENU hTaskTrayMenu;                            // メニュー
 HHOOK hHook;                                    // マウスのフック用
 HWND  hWnd;                                     // Wndのハンドル
 
-std::vector<EDGEDATA*> RightEdges;
-std::vector<EDGEDATA*> LeftEdges;
-std::vector<EDGEDATA*> TopEdges;
-std::vector<EDGEDATA*> BottomEdges;
+std::vector<std::shared_ptr<EDGEDATA>> RightEdges;
+std::vector<std::shared_ptr<EDGEDATA>> LeftEdges;
+std::vector<std::shared_ptr<EDGEDATA>> TopEdges;
+std::vector<std::shared_ptr<EDGEDATA>> BottomEdges;
 
 
 #ifdef _DEBUG
@@ -28,10 +28,10 @@ int dbg_n;                                      // DEBUG用コンソールから
 #endif
 
 // このコード モジュールに含まれる関数の宣言を転送します:
-ATOM                MyRegisterClass(HINSTANCE hInstance);
-BOOL                InitInstance(HINSTANCE, int);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+ATOM                MyRegisterClass(HINSTANCE hInstance) noexcept;
+BOOL                InitInstance(HINSTANCE, int) noexcept;
+LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
+INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM) noexcept;
 
 
 LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPARAM lParam)
@@ -42,12 +42,51 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
     static char direction_old = 0;
 
     char direction_current = 0;
+    std::vector<std::shared_ptr<EDGEDATA>>::const_iterator result;
     BOOL ret = FALSE;
 
     if (nCode < HC_ACTION)
     {
         return CallNextHookEx(hHook, nCode, wParam, lParam);
     }
+
+
+    auto end = gsl::finally([&pMsLLStr, &direction_current]()
+#ifndef _DEBUG        
+        noexcept
+#endif
+        {
+
+#ifdef _DEBUG
+        std::wstring str_x_c = std::to_wstring(pMsLLStr->pt.x);
+        std::wstring str_x_o = std::to_wstring(x);
+        std::wstring str_y_c = std::to_wstring(pMsLLStr->pt.y);
+        std::wstring str_y_o = std::to_wstring(y);
+        std::wstring str_d_c = std::to_wstring(direction_current);
+        std::wstring str_d_o = std::to_wstring(direction_old);
+        std::wstring str_c(_T(","));
+        std::wstring str_n(_T("\n"));
+
+        WriteConsole(stdoutHandle, str_x_c.c_str(), gsl::narrow_cast<DWORD>(str_x_o.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_x_o.c_str(), gsl::narrow_cast<DWORD>(str_x_o.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_y_c.c_str(), gsl::narrow_cast<DWORD>(str_y_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_y_o.c_str(), gsl::narrow_cast<DWORD>(str_y_o.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_d_c.c_str(), gsl::narrow_cast<DWORD>(str_d_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_d_o.c_str(), gsl::narrow_cast<DWORD>(str_d_o.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+#endif
+
+        x = pMsLLStr->pt.x;
+        y = pMsLLStr->pt.y;
+
+        direction_old = direction_current;
+        });
+
 
     if (x != pMsLLStr->pt.x)
     {
@@ -64,7 +103,7 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
     // 左に移動していたのが停止した場合
     if (((direction_old & MOVE_LEFT) != 0) && ((direction_current & MOVE_LEFT) == 0))
     {
-        std::vector<EDGEDATA*>::const_iterator result = std::find_if(LeftEdges.begin(), LeftEdges.end(), [pMsLLStr](EDGEDATA* pEdge)
+        result = std::find_if(LeftEdges.begin(), LeftEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.x <= pEdge->edge_near)
                 && (pMsLLStr->pt.x > pEdge->edge_far)
@@ -77,32 +116,30 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
 
-            if (pMsLLStr->pt.y < ((EDGEDATA*)(*result))->translate_range_high)
-                ret = SetCursorPos(pMsLLStr->pt.x, ((EDGEDATA*)(*result))->translate_range_high);
+            if (pMsLLStr->pt.y < (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
+                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_high);
             else
-                ret = SetCursorPos(pMsLLStr->pt.x, ((EDGEDATA*)(*result))->translate_range_low - 1);
+                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1);
 
 #ifdef _DEBUG
             std::wstring str_sc(_T("SetCursorPos :"));
             std::wstring str_t(_T("TRUE\n"));
             std::wstring str_f(_T("FALSE\n"));
 
-            WriteConsole(stdoutHandle, str_sc.c_str(), (DWORD)str_sc.size(), (LPDWORD)&dbg_n, NULL);
+            WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), (DWORD)str_t.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             else
-                WriteConsole(stdoutHandle, str_f.c_str(), (DWORD)str_f.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
-
+            return nCode;
         }
-
-        goto finish;
     }
 
     // 右に移動していたのが停止した場合
     if (((direction_old & MOVE_RIGHT) != 0) && ((direction_current & MOVE_RIGHT) == 0))
     {
-        std::vector<EDGEDATA*>::const_iterator result = std::find_if(RightEdges.begin(), RightEdges.end(), [pMsLLStr](EDGEDATA* pEdge)
+        result = std::find_if(RightEdges.begin(), RightEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.x >= pEdge->edge_near)
                 && (pMsLLStr->pt.x < pEdge->edge_far)
@@ -115,32 +152,30 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
 
-            if (pMsLLStr->pt.y < ((EDGEDATA*)(*result))->translate_range_high)
-                ret = SetCursorPos(pMsLLStr->pt.x, ((EDGEDATA*)(*result))->translate_range_high);
+            if (pMsLLStr->pt.y < (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
+                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_high);
             else
-                ret = SetCursorPos(pMsLLStr->pt.x, ((EDGEDATA*)(*result))->translate_range_low - 1);
+                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1);
 
 #ifdef _DEBUG
             std::wstring str_sc(_T("SetCursorPos :"));
             std::wstring str_t(_T("TRUE\n"));
             std::wstring str_f(_T("FALSE\n"));
 
-            WriteConsole(stdoutHandle, str_sc.c_str(), (DWORD)str_sc.size(), (LPDWORD)&dbg_n, NULL);
+            WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), (DWORD)str_t.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             else
-                WriteConsole(stdoutHandle, str_f.c_str(), (DWORD)str_f.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
-
+            return nCode;
         }
-
-        goto finish;
     }
 
     // 上に移動していたのが停止した場合
     if (((direction_old & MOVE_UP) != 0) && ((direction_current & MOVE_UP) == 0))
     {
-        std::vector<EDGEDATA*>::const_iterator result = std::find_if(TopEdges.begin(), TopEdges.end(), [pMsLLStr](EDGEDATA* pEdge)
+        result = std::find_if(TopEdges.begin(), TopEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.y <= pEdge->edge_near)
                 && (pMsLLStr->pt.y > pEdge->edge_far)
@@ -153,33 +188,31 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
 
-            if (pMsLLStr->pt.x > ((EDGEDATA*)(*result))->translate_range_high)
-                ret = SetCursorPos(((EDGEDATA*)(*result))->translate_range_high-1, pMsLLStr->pt.y);
+            if (pMsLLStr->pt.x > (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
+                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_high-1, pMsLLStr->pt.y);
             else
-                ret = SetCursorPos(((EDGEDATA*)(*result))->translate_range_low, pMsLLStr->pt.y);
+                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_low, pMsLLStr->pt.y);
 
 #ifdef _DEBUG
             std::wstring str_sc(_T("SetCursorPos :"));
             std::wstring str_t(_T("TRUE\n"));
             std::wstring str_f(_T("FALSE\n"));
 
-            WriteConsole(stdoutHandle, str_sc.c_str(), (DWORD)str_sc.size(), (LPDWORD)&dbg_n, NULL);
+            WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), (DWORD)str_t.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             else
-                WriteConsole(stdoutHandle, str_f.c_str(), (DWORD)str_f.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
-
+            return nCode;
         }
-
-        goto finish;
     }
 
 
     // 下に移動していたのが停止した場合
     if (((direction_old & MOVE_DOWN) != 0) && ((direction_current & MOVE_DOWN) == 0))
     {
-        std::vector<EDGEDATA*>::const_iterator result = std::find_if(BottomEdges.begin(), BottomEdges.end(), [pMsLLStr](EDGEDATA* pEdge)
+        result = std::find_if(BottomEdges.begin(), BottomEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.y >= pEdge->edge_near)
                 && (pMsLLStr->pt.y < pEdge->edge_far)
@@ -192,65 +225,32 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
 
-            if (pMsLLStr->pt.x > ((EDGEDATA*)(*result))->translate_range_high)
-                ret = SetCursorPos(((EDGEDATA*)(*result))->translate_range_high - 1, pMsLLStr->pt.y);
+            if (pMsLLStr->pt.x > (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
+                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_high - 1, pMsLLStr->pt.y);
             else
-                ret = SetCursorPos(((EDGEDATA*)(*result))->translate_range_low, pMsLLStr->pt.y);
+                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_low, pMsLLStr->pt.y);
 
 #ifdef _DEBUG
             std::wstring str_sc(_T("SetCursorPos :"));
             std::wstring str_t(_T("TRUE\n"));
             std::wstring str_f(_T("FALSE\n"));
 
-            WriteConsole(stdoutHandle, str_sc.c_str(), (DWORD)str_sc.size(), (LPDWORD)&dbg_n, NULL);
+            WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), (DWORD)str_t.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
             else
-                WriteConsole(stdoutHandle, str_f.c_str(), (DWORD)str_f.size(), (LPDWORD)&dbg_n, NULL);
+                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
-
+            return nCode;
         }
-
-        goto finish;
     }
-
-finish:
-
-#ifdef _DEBUG
-    std::wstring str_x_c = std::to_wstring(pMsLLStr->pt.x);
-    std::wstring str_x_o = std::to_wstring(x);
-    std::wstring str_y_c = std::to_wstring(pMsLLStr->pt.y);
-    std::wstring str_y_o = std::to_wstring(y);
-    std::wstring str_d_c = std::to_wstring(direction_current);
-    std::wstring str_d_o = std::to_wstring(direction_old);
-    std::wstring str_c(_T(","));
-    std::wstring str_n(_T("\n"));
-    
-    WriteConsole(stdoutHandle, str_x_c.c_str(), (DWORD)str_x_o.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_c.c_str(), (DWORD)str_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_x_o.c_str(), (DWORD)str_x_o.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_c.c_str(), (DWORD)str_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_y_c.c_str(), (DWORD)str_y_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_c.c_str(), (DWORD)str_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_y_o.c_str(), (DWORD)str_y_o.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_c.c_str(), (DWORD)str_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_d_c.c_str(), (DWORD)str_d_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_c.c_str(), (DWORD)str_c.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_d_o.c_str(), (DWORD)str_d_o.size(), (LPDWORD)&dbg_n, NULL);
-    WriteConsole(stdoutHandle, str_n.c_str(), (DWORD)str_n.size(), (LPDWORD)&dbg_n, NULL);
-#endif
-
-    x = pMsLLStr->pt.x;
-    y = pMsLLStr->pt.y;
-
-    direction_old = direction_current;
 
     return nCode;
 }
 
-BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, LPRECT lpMon, LPARAM dwData) {
-    RECT* rect = new RECT(*(RECT*)lpMon);
-    ((std::vector<RECT *>*)dwData)->push_back(rect);
+BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, gsl::not_null<LPRECT> lpMon, LPARAM dwData) {
+    std::shared_ptr<RECT> rect = std::make_shared<RECT>(*lpMon);
+    (reinterpret_cast<std::vector<std::shared_ptr<RECT>>*>(dwData))->push_back(std::move(rect));
 
     return TRUE;
 }
@@ -264,7 +264,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     // TODO: ここにコードを挿入してください。
-    std::vector<RECT*> mon;                         // モニタ情報
+    std::vector<std::shared_ptr<RECT>> mon;                         // モニタ情報
 
 #ifdef _DEBUG
     AllocConsole();
@@ -290,13 +290,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
     EnumDisplayMonitors(NULL, NULL, (MONITORENUMPROC)InfoEnumProc, (LPARAM)&mon);
 
-    std::for_each(mon.begin(), mon.end(), [mon](RECT* rect) {
-        std::vector<RECT*>::const_iterator result;
+    std::for_each(mon.begin(), mon.end(), [mon](std::shared_ptr<RECT> rect) {
+        std::vector<std::shared_ptr<RECT>>::const_iterator result;
 
-        EDGEDATA* pEdge_left = new EDGEDATA();
-        EDGEDATA* pEdge_right = new EDGEDATA();
-        EDGEDATA* pEdge_top = new EDGEDATA();
-        EDGEDATA* pEdge_bottom = new EDGEDATA();
+        std::shared_ptr<EDGEDATA> pEdge_left = std::make_shared<EDGEDATA>();
+        std::shared_ptr<EDGEDATA> pEdge_right = std::make_unique<EDGEDATA>();
+        std::shared_ptr<EDGEDATA> pEdge_top = std::make_unique<EDGEDATA>();
+        std::shared_ptr<EDGEDATA> pEdge_bottom = std::make_unique<EDGEDATA>();
 
         pEdge_left->edge_near = rect->left;
         pEdge_right->edge_near = rect->right;
@@ -304,63 +304,64 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         pEdge_bottom->edge_near = rect->bottom;
 
         // 左端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_left](RECT* rect)
-        {
-            return pEdge_left->edge_near == rect->right;
-        });
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_left](std::shared_ptr<RECT> rect) noexcept
+            {
+                return pEdge_left->edge_near == rect->right;
+            });
 
         if (result != mon.end())
         {
-            pEdge_left->edge_far = ((RECT*)(*result))->right - 100;
-            pEdge_left->translate_range_high = ((RECT*)(*result))->top;
-            pEdge_left->translate_range_low = ((RECT*)(*result))->bottom;
+            pEdge_left->edge_far = ((*result))->right - 100;
+            pEdge_left->translate_range_high = ((*result))->top;
+            pEdge_left->translate_range_low = ((*result))->bottom;
 
-            LeftEdges.push_back(pEdge_left);
+            LeftEdges.push_back(std::move(pEdge_left));
         }
 
+
         // 右端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_right](RECT* rect)
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_right](std::shared_ptr<RECT> rect) noexcept
         {
             return pEdge_right->edge_near == rect->left;
         });
 
         if (result != mon.end())
         {
-            pEdge_right->edge_far = ((RECT*)(*result))->left + 100;
-            pEdge_right->translate_range_high = ((RECT*)(*result))->top;
-            pEdge_right->translate_range_low = ((RECT*)(*result))->bottom;
+            pEdge_right->edge_far = ((*result))->left + 100;
+            pEdge_right->translate_range_high = ((*result))->top;
+            pEdge_right->translate_range_low = ((*result))->bottom;
 
-            RightEdges.push_back(pEdge_right);
+            RightEdges.push_back(std::move(pEdge_right));
         }
 
         // 上端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_top](RECT* rect)
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_top](std::shared_ptr<RECT> rect) noexcept
         {
             return pEdge_top->edge_near == rect->bottom;
         });
 
         if (result != mon.end())
         {
-            pEdge_top->edge_far = ((RECT*)(*result))->bottom - 100;
-            pEdge_top->translate_range_high = ((RECT*)(*result))->right;
-            pEdge_top->translate_range_low = ((RECT*)(*result))->left;
+            pEdge_top->edge_far = ((*result))->bottom - 100;
+            pEdge_top->translate_range_high = ((*result))->right;
+            pEdge_top->translate_range_low = ((*result))->left;
 
-            TopEdges.push_back(pEdge_top);
+            TopEdges.push_back(std::move(pEdge_top));
         }
 
         // 下端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_bottom](RECT* rect)
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_bottom](std::shared_ptr<RECT> rect) noexcept
         {
             return pEdge_bottom->edge_near == rect->top;
         });
 
         if (result != mon.end())
         {
-            pEdge_bottom->edge_far = ((RECT*)(*result))->top + 100;
-            pEdge_bottom->translate_range_high = ((RECT*)(*result))->right;
-            pEdge_bottom->translate_range_low = ((RECT*)(*result))->left;
+            pEdge_bottom->edge_far = ((*result))->top + 100;
+            pEdge_bottom->translate_range_high = ((*result))->right;
+            pEdge_bottom->translate_range_low = ((*result))->left;
 
-            BottomEdges.push_back(pEdge_bottom);
+            BottomEdges.push_back(std::move(pEdge_bottom));
         }
     });
 
@@ -385,9 +386,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 //
 //  目的: ウィンドウ クラスを登録します。
 //
-ATOM MyRegisterClass(HINSTANCE hInstance)
+ATOM MyRegisterClass(HINSTANCE hInstance) noexcept
 {
-    WNDCLASSEXW wcex;
+    WNDCLASSEXW wcex{};
 
     wcex.cbSize = sizeof(WNDCLASSEX);
 
@@ -398,13 +399,13 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.hInstance      = hInstance;
     wcex.hIcon          = hIcon;
     wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
-    wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
+    wcex.hbrBackground  = reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
     wcex.lpszMenuName   = MAKEINTRESOURCEW(IDC_MOUSEMOVEHELPER);
     wcex.lpszClassName  = szWindowClass;
     wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
     return RegisterClassExW(&wcex);
-}
+} 
 
 //
 //   関数: InitInstance(HINSTANCE, int)
@@ -416,7 +417,7 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 //        この関数で、グローバル変数でインスタンス ハンドルを保存し、
 //        メイン プログラム ウィンドウを作成および表示します。
 //
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) noexcept
 {
    hInst = hInstance; // グローバル変数にインスタンス ハンドルを格納する
 
@@ -434,7 +435,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    return TRUE;
 }
 
-void addTaskTrayIcon(HWND hWnd)
+void addTaskTrayIcon(HWND hWnd) noexcept
 {
     NOTIFYICONDATA nid = { 0 };
     nid.cbSize = sizeof(NOTIFYICONDATA);
@@ -446,7 +447,7 @@ void addTaskTrayIcon(HWND hWnd)
     Shell_NotifyIcon(NIM_ADD, &nid);
 }
 
-void delTaskTrayIcon(HWND hWnd)
+void delTaskTrayIcon(HWND hWnd) noexcept
 {
     NOTIFYICONDATA nid = { 0 };
     nid.cbSize = sizeof(NOTIFYICONDATA);
@@ -464,13 +465,13 @@ void delTaskTrayIcon(HWND hWnd)
 //  WM_DESTROY  - 中止メッセージを表示して戻る
 //
 //
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) noexcept
 {
     switch (message)
     {
     case WM_SIZE:
     {
-        int param = LOWORD(wParam);
+        const int param = LOWORD(wParam);
         switch (param)
         {
             // 最小化した時
@@ -483,6 +484,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             ShowWindow(FindWindow(TEXT("MouseMoveHelper"), NULL), SW_HIDE);
         }
         break;
+
+        default:
+            break;
         }
     }
     break;
@@ -518,12 +522,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
         }
         break;
+
+        default:
+            break;
         }
     }
 
     case WM_COMMAND:
         {
-            int wmId = LOWORD(wParam);
+            const int wmId = LOWORD(wParam);
             // 選択されたメニューの解析:
             switch (wmId)
             {
@@ -541,7 +548,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_PAINT:
         {
             PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
+            //HDC hdc = BeginPaint(hWnd, &ps);
+            const HDC__* const hdc = BeginPaint(hWnd, &ps);
             // TODO: HDC を使用する描画コードをここに追加してください...
             EndPaint(hWnd, &ps);
         }
@@ -564,21 +572,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 }
 
 // バージョン情報ボックスのメッセージ ハンドラーです。
-INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) noexcept
 {
     UNREFERENCED_PARAMETER(lParam);
     switch (message)
     {
     case WM_INITDIALOG:
-        return (INT_PTR)TRUE;
+        return static_cast<INT_PTR>(TRUE);
 
     case WM_COMMAND:
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
         {
             EndDialog(hDlg, LOWORD(wParam));
-            return (INT_PTR)TRUE;
+            return static_cast<INT_PTR>(TRUE);
         }
         break;
+
+    default: break;
     }
-    return (INT_PTR)FALSE;
+    return static_cast<INT_PTR>(FALSE);
 }

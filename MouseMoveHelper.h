@@ -6,6 +6,8 @@
 #include "shellscalingapi.h"
 #include <vector>
 #include <algorithm>
+#include <utility>
+#include <gsl/gsl>
 
 #ifdef _DEBUG
 #include <string>
@@ -23,7 +25,7 @@ typedef struct _EDGEDATA
 	long translate_range_high;
 	long translate_range_low;
 
-	_EDGEDATA()
+	_EDGEDATA() noexcept
 	{
 		edge_near = 0;
 		edge_far = 0;
@@ -33,7 +35,7 @@ typedef struct _EDGEDATA
 }EDGEDATA;
 
 LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPARAM lParam);
-BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, LPRECT lpMon, LPARAM dwData);
+BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, gsl::not_null<LPRECT> lpMon, LPARAM dwData);
 
-void addTaskTrayIcon(HWND hWnd);
-void delTaskTrayIcon(HWND hWnd);
+void addTaskTrayIcon(HWND hWnd) noexcept;
+void delTaskTrayIcon(HWND hWnd) noexcept;
