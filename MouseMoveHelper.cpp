@@ -21,6 +21,9 @@ std::vector<std::shared_ptr<EDGEDATA>> LeftEdges;
 std::vector<std::shared_ptr<EDGEDATA>> TopEdges;
 std::vector<std::shared_ptr<EDGEDATA>> BottomEdges;
 
+BOOL RelativeMode = FALSE;
+BOOL AvoidMode = FALSE;
+
 
 #ifdef _DEBUG
 HANDLE stdoutHandle;                            // DEBUG用コンソールの標準出力
@@ -249,8 +252,14 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
 }
 
 BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, gsl::not_null<LPRECT> lpMon, LPARAM dwData) {
+    BOOL ret = FALSE;
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+
     std::shared_ptr<RECT> rect = std::make_shared<RECT>(*lpMon);
     (reinterpret_cast<std::vector<std::shared_ptr<RECT>>*>(dwData))->push_back(std::move(rect));
+
+    ret = GetMonitorInfoW(hMon, &mi);
 
     return TRUE;
 }
@@ -534,6 +543,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // 選択されたメニューの解析:
             switch (wmId)
             {
+            case ID_MENU_RELATIVE_MODE:
+                if (hTaskTrayMenu)
+                {
+                    RelativeMode = !RelativeMode;
+                    if(RelativeMode)
+                        CheckMenuItem(hTaskTrayMenu, ID_MENU_RELATIVE_MODE, MF_BYCOMMAND | MFS_CHECKED);
+                    else
+                        CheckMenuItem(hTaskTrayMenu, ID_MENU_RELATIVE_MODE, MF_BYCOMMAND | MFS_UNCHECKED);
+                }
+                break;
+
+            case ID_MENU_TASKBAR_AVOID_MODE:
+                if (hTaskTrayMenu)
+                {
+                    AvoidMode = !AvoidMode;
+                    if (AvoidMode)
+                        CheckMenuItem(hTaskTrayMenu, ID_MENU_TASKBAR_AVOID_MODE, MF_BYCOMMAND | MFS_CHECKED);
+                    else
+                        CheckMenuItem(hTaskTrayMenu, ID_MENU_TASKBAR_AVOID_MODE, MF_BYCOMMAND | MFS_UNCHECKED);
+                }               break;
+
             case IDM_ABOUT:
                 DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
                 break;
