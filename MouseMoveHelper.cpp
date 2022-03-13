@@ -6,6 +6,7 @@
 
 #define MAX_LOADSTRING 100
 #define WM_TASKTRAY (WM_APP + 1)
+#define EDGE_CHECK_OFFSET  100
 
 // グローバル変数:
 HINSTANCE hInst;                                // 現在のインターフェイス
@@ -22,7 +23,7 @@ std::vector<std::shared_ptr<EDGEDATA>> TopEdges;
 std::vector<std::shared_ptr<EDGEDATA>> BottomEdges;
 
 BOOL RelativeMode = FALSE;
-BOOL AvoidMode = FALSE;
+BOOL AvoidMode = TRUE;
 
 
 #ifdef _DEBUG
@@ -33,28 +34,33 @@ int dbg_n;                                      // DEBUG用コンソールから
 // このコード モジュールに含まれる関数の宣言を転送します:
 ATOM                MyRegisterClass(HINSTANCE hInstance) noexcept;
 BOOL                InitInstance(HINSTANCE, int) noexcept;
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
+LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM) noexcept;
 
 
 LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPARAM lParam)
 {
     MSLLHOOKSTRUCT* pMsLLStr = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
+    POINT p = {};
     static long x = 0;
     static long y = 0;
+
+#ifdef _DEBUG
     static char direction_old = 0;
+    static int z = 0;
+#endif
 
     char direction_current = 0;
     std::vector<std::shared_ptr<EDGEDATA>>::const_iterator result;
-    BOOL ret = FALSE;
 
     if (nCode < HC_ACTION)
     {
         return CallNextHookEx(hHook, nCode, wParam, lParam);
     }
 
+    if (wParam != WM_MOUSEMOVE) return nCode;
 
-    auto end = gsl::finally([&pMsLLStr, &direction_current]()
+    auto end = gsl::finally([&pMsLLStr, &direction_current, nCode, wParam, lParam]()
 #ifndef _DEBUG        
         noexcept
 #endif
@@ -67,6 +73,7 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         std::wstring str_y_o = std::to_wstring(y);
         std::wstring str_d_c = std::to_wstring(direction_current);
         std::wstring str_d_o = std::to_wstring(direction_old);
+        std::wstring str_z   = std::to_wstring(z);
         std::wstring str_c(_T(","));
         std::wstring str_n(_T("\n"));
 
@@ -81,13 +88,19 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         WriteConsole(stdoutHandle, str_d_c.c_str(), gsl::narrow_cast<DWORD>(str_d_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
         WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
         WriteConsole(stdoutHandle, str_d_o.c_str(), gsl::narrow_cast<DWORD>(str_d_o.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+        WriteConsole(stdoutHandle, str_z.c_str(), gsl::narrow_cast<DWORD>(str_z.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
         WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+
+        direction_old = direction_current;
+        z++;
 #endif
 
         x = pMsLLStr->pt.x;
         y = pMsLLStr->pt.y;
 
-        direction_old = direction_current;
+
+        return CallNextHookEx(hHook, nCode, wParam, lParam);
         });
 
 
@@ -103,13 +116,13 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
         else direction_current |= MOVE_DOWN;                    // 下に移動中
     }
 
-    // 左に移動していたのが停止した場合
-    if (((direction_old & MOVE_LEFT) != 0) && ((direction_current & MOVE_LEFT) == 0))
+    // 左に移動していた場合
+    if ((direction_current & MOVE_LEFT) != 0)
     {
         result = std::find_if(LeftEdges.begin(), LeftEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.x <= pEdge->edge_near)
-                && (pMsLLStr->pt.x > pEdge->edge_far)
+                && (pMsLLStr->pt.x > pEdge->edge_far - EDGE_CHECK_OFFSET)
                 && ((pMsLLStr->pt.y < pEdge->translate_range_high)
                     || (pMsLLStr->pt.y > pEdge->translate_range_low))
                 );
@@ -117,35 +130,43 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
 
         if (result != LeftEdges.end())
         {
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
 
             if (pMsLLStr->pt.y < (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
-                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_high);
+            {
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>((std::shared_ptr<EDGEDATA>(*result))->translate_range_high << 16) | gsl::narrow_cast<unsigned short>((std::shared_ptr<EDGEDATA>(*result))->edge_far - 1));
+            }
             else
-                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1);
+            {
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>(((std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1) << 16) | gsl::narrow_cast<unsigned short>((std::shared_ptr<EDGEDATA>(*result))->edge_far - 1));
+            }
 
 #ifdef _DEBUG
-            std::wstring str_sc(_T("SetCursorPos :"));
-            std::wstring str_t(_T("TRUE\n"));
-            std::wstring str_f(_T("FALSE\n"));
+            std::wstring str_sc(_T("SetCursorPos : "));
+            std::wstring str_c(_T(","));
+            std::wstring str_n(_T("\n"));
+            std::wstring str_x = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->edge_far - 1);
+            std::wstring str_y_h = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_high);
+            std::wstring str_y_l = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1);
 
             WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            else
-                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+            WriteConsole(stdoutHandle, str_x.c_str(), gsl::narrow_cast<DWORD>(str_x.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+            WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+            WriteConsole(stdoutHandle, str_y_h.c_str(), gsl::narrow_cast<DWORD>(str_y_h.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+            WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+            WriteConsole(stdoutHandle, str_y_l.c_str(), gsl::narrow_cast<DWORD>(str_y_l.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+            WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
             return nCode;
         }
     }
 
-    // 右に移動していたのが停止した場合
-    if (((direction_old & MOVE_RIGHT) != 0) && ((direction_current & MOVE_RIGHT) == 0))
+    // 右に移動していた場合
+    if ((direction_current & MOVE_RIGHT) != 0)
     {
         result = std::find_if(RightEdges.begin(), RightEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.x >= pEdge->edge_near)
-                && (pMsLLStr->pt.x < pEdge->edge_far)
+                && (pMsLLStr->pt.x < pEdge->edge_far + EDGE_CHECK_OFFSET)
                 && ((pMsLLStr->pt.y < pEdge->translate_range_high)
                     || (pMsLLStr->pt.y > pEdge->translate_range_low))
                 );
@@ -153,35 +174,38 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
 
         if (result != RightEdges.end())
         {
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
-
             if (pMsLLStr->pt.y < (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
-                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_high);
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>((std::shared_ptr<EDGEDATA>(*result))->translate_range_high << 16) | gsl::narrow_cast<unsigned short>((std::shared_ptr<EDGEDATA>(*result))->edge_far + 1));
             else
-                ret = SetCursorPos(pMsLLStr->pt.x, (std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1);
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>(((std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1) << 16) | gsl::narrow_cast<unsigned short>((std::shared_ptr<EDGEDATA>(*result))->edge_far + 1));
 
 #ifdef _DEBUG
-            std::wstring str_sc(_T("SetCursorPos :"));
-            std::wstring str_t(_T("TRUE\n"));
-            std::wstring str_f(_T("FALSE\n"));
+            std::wstring str_sc(_T("SetCursorPos : "));
+            std::wstring str_c(_T(","));
+            std::wstring str_n(_T("\n"));
+            std::wstring str_x = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->edge_far + 1);
+            std::wstring str_y_h = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_high);
+            std::wstring str_y_l = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_low - 1);
 
             WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            else
-                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_x.c_str(), gsl::narrow_cast<DWORD>(str_x.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_y_h.c_str(), gsl::narrow_cast<DWORD>(str_y_h.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_y_l.c_str(), gsl::narrow_cast<DWORD>(str_y_l.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
             return nCode;
         }
     }
 
-    // 上に移動していたのが停止した場合
-    if (((direction_old & MOVE_UP) != 0) && ((direction_current & MOVE_UP) == 0))
+    // 上に移動していた場合
+    if ((direction_current & MOVE_UP) != 0)
     {
         result = std::find_if(TopEdges.begin(), TopEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.y <= pEdge->edge_near)
-                && (pMsLLStr->pt.y > pEdge->edge_far)
+                && (pMsLLStr->pt.y > pEdge->edge_far - EDGE_CHECK_OFFSET)
                 && ((pMsLLStr->pt.x < pEdge->translate_range_high)
                     || (pMsLLStr->pt.x > pEdge->translate_range_low))
                 );
@@ -189,36 +213,39 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
 
         if (result != TopEdges.end())
         {
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
-
             if (pMsLLStr->pt.x > (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
-                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_high-1, pMsLLStr->pt.y);
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>(((std::shared_ptr<EDGEDATA>(*result))->edge_far - 1) << 16) | gsl::narrow_cast<unsigned short>((std::shared_ptr<EDGEDATA>(*result)->translate_range_high - 1)));
             else
-                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_low, pMsLLStr->pt.y);
-
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>(((std::shared_ptr<EDGEDATA>(*result))->edge_far - 1) << 16) | gsl::narrow_cast<unsigned short>(std::shared_ptr<EDGEDATA>(*result)->translate_range_low));
+ 
 #ifdef _DEBUG
-            std::wstring str_sc(_T("SetCursorPos :"));
-            std::wstring str_t(_T("TRUE\n"));
-            std::wstring str_f(_T("FALSE\n"));
+            std::wstring str_sc(_T("SetCursorPos : "));
+            std::wstring str_c(_T(","));
+            std::wstring str_n(_T("\n"));
+            std::wstring str_x_h = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_high - 1);
+            std::wstring str_x_l = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_low);
+            std::wstring str_y = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->edge_far - 1);
 
             WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            else
-                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_x_h.c_str(), gsl::narrow_cast<DWORD>(str_x_h.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_x_l.c_str(), gsl::narrow_cast<DWORD>(str_x_l.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_y.c_str(), gsl::narrow_cast<DWORD>(str_y.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
             return nCode;
         }
     }
 
 
-    // 下に移動していたのが停止した場合
-    if (((direction_old & MOVE_DOWN) != 0) && ((direction_current & MOVE_DOWN) == 0))
+    // 下に移動していた場合
+    if ((direction_current & MOVE_DOWN) != 0)
     {
         result = std::find_if(BottomEdges.begin(), BottomEdges.end(), [pMsLLStr](std::shared_ptr<EDGEDATA> pEdge) noexcept
         {
             return ((pMsLLStr->pt.y >= pEdge->edge_near)
-                && (pMsLLStr->pt.y < pEdge->edge_far)
+                && (pMsLLStr->pt.y < pEdge->edge_far + EDGE_CHECK_OFFSET)
                 && ((pMsLLStr->pt.x < pEdge->translate_range_high)
                     || (pMsLLStr->pt.x > pEdge->translate_range_low))
                 );
@@ -226,23 +253,26 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
 
         if (result != BottomEdges.end())
         {
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
-
             if (pMsLLStr->pt.x > (std::shared_ptr<EDGEDATA>(*result))->translate_range_high)
-                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_high - 1, pMsLLStr->pt.y);
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>(((std::shared_ptr<EDGEDATA>(*result))->edge_far + 1) << 16) | gsl::narrow_cast<unsigned short>((std::shared_ptr<EDGEDATA>(*result)->translate_range_high - 1)));
             else
-                ret = SetCursorPos((std::shared_ptr<EDGEDATA>(*result))->translate_range_low, pMsLLStr->pt.y);
+                PostMessage(hWnd, WM_MOUSEMOVE, 0, static_cast<LPARAM>(((std::shared_ptr<EDGEDATA>(*result))->edge_far + 1) << 16) | gsl::narrow_cast<unsigned short>(std::shared_ptr<EDGEDATA>(*result)->translate_range_low));
 
 #ifdef _DEBUG
-            std::wstring str_sc(_T("SetCursorPos :"));
-            std::wstring str_t(_T("TRUE\n"));
-            std::wstring str_f(_T("FALSE\n"));
+            std::wstring str_sc(_T("SetCursorPos : "));
+            std::wstring str_c(_T(","));
+            std::wstring str_n(_T("\n"));
+            std::wstring str_x_h = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_high - 1);
+            std::wstring str_x_l = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->translate_range_low);
+            std::wstring str_y = std::to_wstring((std::shared_ptr<EDGEDATA>(*result))->edge_far + 1);
 
             WriteConsole(stdoutHandle, str_sc.c_str(), gsl::narrow_cast<DWORD>(str_sc.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            if (ret)
-                WriteConsole(stdoutHandle, str_t.c_str(), gsl::narrow_cast<DWORD>(str_t.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
-            else
-                WriteConsole(stdoutHandle, str_f.c_str(), gsl::narrow_cast<DWORD>(str_f.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_x_h.c_str(), gsl::narrow_cast<DWORD>(str_x_h.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_x_l.c_str(), gsl::narrow_cast<DWORD>(str_x_l.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_c.c_str(), gsl::narrow_cast<DWORD>(str_c.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_y.c_str(), gsl::narrow_cast<DWORD>(str_y.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
+                WriteConsole(stdoutHandle, str_n.c_str(), gsl::narrow_cast<DWORD>(str_n.size()), reinterpret_cast<LPDWORD>(&dbg_n), NULL);
 #endif
             return nCode;
         }
@@ -254,14 +284,138 @@ LRESULT CALLBACK LowLevelMouseProc(_In_ int nCode, _In_ WPARAM wParam, _In_ LPAR
 BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, gsl::not_null<LPRECT> lpMon, LPARAM dwData) {
     BOOL ret = FALSE;
     MONITORINFO mi = {};
+
     mi.cbSize = sizeof(mi);
-
-    std::shared_ptr<RECT> rect = std::make_shared<RECT>(*lpMon);
-    (reinterpret_cast<std::vector<std::shared_ptr<RECT>>*>(dwData))->push_back(std::move(rect));
-
     ret = GetMonitorInfoW(hMon, &mi);
 
+    (reinterpret_cast<std::vector<std::shared_ptr<MONITORINFO>>*>(dwData))->push_back(move(std::make_shared<MONITORINFO>(mi)));
+
+
     return TRUE;
+}
+
+void GetMonitorAreaInfo()
+{
+    std::vector<std::shared_ptr<MONITORINFO>> mon;                         // モニタ情報
+
+    EnumDisplayMonitors(NULL, NULL, (MONITORENUMPROC)InfoEnumProc, reinterpret_cast<LPARAM>(& mon));
+
+    LeftEdges.clear();
+    RightEdges.clear();
+    TopEdges.clear();
+    BottomEdges.clear();
+
+    std::for_each(mon.begin(), mon.end(), [mon](std::shared_ptr<MONITORINFO> mi) {
+        std::vector<std::shared_ptr<MONITORINFO>>::const_iterator result;
+
+        std::shared_ptr<EDGEDATA> pEdge_left = std::make_shared<EDGEDATA>();
+        std::shared_ptr<EDGEDATA> pEdge_right = std::make_shared<EDGEDATA>();
+        std::shared_ptr<EDGEDATA> pEdge_top = std::make_shared<EDGEDATA>();
+        std::shared_ptr<EDGEDATA> pEdge_bottom = std::make_shared<EDGEDATA>();
+
+        pEdge_left->edge_near = mi->rcMonitor.left;
+        pEdge_right->edge_near = mi->rcMonitor.right;
+        pEdge_top->edge_near = mi->rcMonitor.top;
+        pEdge_bottom->edge_near = mi->rcMonitor.bottom;
+
+        // 左端検索
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_left](std::shared_ptr<MONITORINFO> mi) noexcept
+            {
+                return pEdge_left->edge_near == mi->rcMonitor.right;
+            });
+
+        if (result != mon.end())
+        {
+            if (AvoidMode)
+            {
+                pEdge_left->edge_far = ((*result))->rcWork.right;
+                pEdge_left->translate_range_high = ((*result))->rcWork.top;
+                pEdge_left->translate_range_low = ((*result))->rcWork.bottom;
+            }
+            else
+            {
+                pEdge_left->edge_far = ((*result))->rcMonitor.right - 100;
+                pEdge_left->translate_range_high = ((*result))->rcMonitor.top;
+                pEdge_left->translate_range_low = ((*result))->rcMonitor.bottom;
+            }
+
+            LeftEdges.push_back(std::move(pEdge_left));
+        }
+
+
+        // 右端検索
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_right](std::shared_ptr<MONITORINFO> mi) noexcept
+            {
+                return pEdge_right->edge_near == mi->rcMonitor.left;
+            });
+
+        if (result != mon.end())
+        {
+            if (AvoidMode)
+            {
+                pEdge_right->edge_far = ((*result))->rcWork.left + 100;
+                pEdge_right->translate_range_high = ((*result))->rcWork.top;
+                pEdge_right->translate_range_low = ((*result))->rcWork.bottom;
+            }
+            else
+            {
+                pEdge_right->edge_far = ((*result))->rcMonitor.left + 100;
+                pEdge_right->translate_range_high = ((*result))->rcMonitor.top;
+                pEdge_right->translate_range_low = ((*result))->rcMonitor.bottom;
+            }
+
+            RightEdges.push_back(std::move(pEdge_right));
+        }
+
+        // 上端検索
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_top](std::shared_ptr<MONITORINFO> mi) noexcept
+            {
+                return pEdge_top->edge_near == mi->rcMonitor.bottom;
+            });
+
+        if (result != mon.end())
+        {
+            if (AvoidMode)
+            {
+                pEdge_top->edge_far = ((*result))->rcWork.bottom - 100;
+                pEdge_top->translate_range_high = ((*result))->rcWork.right;
+                pEdge_top->translate_range_low = ((*result))->rcWork.left;
+            }
+            else
+            {
+                pEdge_top->edge_far = ((*result))->rcMonitor.bottom - 100;
+                pEdge_top->translate_range_high = ((*result))->rcMonitor.right;
+                pEdge_top->translate_range_low = ((*result))->rcMonitor.left;
+            }
+
+            TopEdges.push_back(std::move(pEdge_top));
+        }
+
+        // 下端検索
+        result = std::find_if(mon.begin(), mon.end(), [pEdge_bottom](std::shared_ptr<MONITORINFO> mi) noexcept
+            {
+                return pEdge_bottom->edge_near == mi->rcMonitor.top;
+            });
+
+        if (result != mon.end())
+        {
+            if (AvoidMode)
+            {
+                pEdge_bottom->edge_far = ((*result))->rcWork.top + 100;
+                pEdge_bottom->translate_range_high = ((*result))->rcWork.right;
+                pEdge_bottom->translate_range_low = ((*result))->rcWork.left;
+            }
+            else
+            {
+                pEdge_bottom->edge_far = ((*result))->rcMonitor.top + 100;
+                pEdge_bottom->translate_range_high = ((*result))->rcMonitor.right;
+                pEdge_bottom->translate_range_low = ((*result))->rcMonitor.left;
+            }
+
+            BottomEdges.push_back(std::move(pEdge_bottom));
+        }
+    });
+
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -273,8 +427,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     // TODO: ここにコードを挿入してください。
-    std::vector<std::shared_ptr<RECT>> mon;                         // モニタ情報
-
 #ifdef _DEBUG
     AllocConsole();
     stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -295,85 +447,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     {
         return FALSE;
     }
-
-    SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
-    EnumDisplayMonitors(NULL, NULL, (MONITORENUMPROC)InfoEnumProc, (LPARAM)&mon);
-
-    std::for_each(mon.begin(), mon.end(), [mon](std::shared_ptr<RECT> rect) {
-        std::vector<std::shared_ptr<RECT>>::const_iterator result;
-
-        std::shared_ptr<EDGEDATA> pEdge_left = std::make_shared<EDGEDATA>();
-        std::shared_ptr<EDGEDATA> pEdge_right = std::make_unique<EDGEDATA>();
-        std::shared_ptr<EDGEDATA> pEdge_top = std::make_unique<EDGEDATA>();
-        std::shared_ptr<EDGEDATA> pEdge_bottom = std::make_unique<EDGEDATA>();
-
-        pEdge_left->edge_near = rect->left;
-        pEdge_right->edge_near = rect->right;
-        pEdge_top->edge_near = rect->top;
-        pEdge_bottom->edge_near = rect->bottom;
-
-        // 左端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_left](std::shared_ptr<RECT> rect) noexcept
-            {
-                return pEdge_left->edge_near == rect->right;
-            });
-
-        if (result != mon.end())
-        {
-            pEdge_left->edge_far = ((*result))->right - 100;
-            pEdge_left->translate_range_high = ((*result))->top;
-            pEdge_left->translate_range_low = ((*result))->bottom;
-
-            LeftEdges.push_back(std::move(pEdge_left));
-        }
-
-
-        // 右端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_right](std::shared_ptr<RECT> rect) noexcept
-        {
-            return pEdge_right->edge_near == rect->left;
-        });
-
-        if (result != mon.end())
-        {
-            pEdge_right->edge_far = ((*result))->left + 100;
-            pEdge_right->translate_range_high = ((*result))->top;
-            pEdge_right->translate_range_low = ((*result))->bottom;
-
-            RightEdges.push_back(std::move(pEdge_right));
-        }
-
-        // 上端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_top](std::shared_ptr<RECT> rect) noexcept
-        {
-            return pEdge_top->edge_near == rect->bottom;
-        });
-
-        if (result != mon.end())
-        {
-            pEdge_top->edge_far = ((*result))->bottom - 100;
-            pEdge_top->translate_range_high = ((*result))->right;
-            pEdge_top->translate_range_low = ((*result))->left;
-
-            TopEdges.push_back(std::move(pEdge_top));
-        }
-
-        // 下端検索
-        result = std::find_if(mon.begin(), mon.end(), [pEdge_bottom](std::shared_ptr<RECT> rect) noexcept
-        {
-            return pEdge_bottom->edge_near == rect->top;
-        });
-
-        if (result != mon.end())
-        {
-            pEdge_bottom->edge_far = ((*result))->top + 100;
-            pEdge_bottom->translate_range_high = ((*result))->right;
-            pEdge_bottom->translate_range_low = ((*result))->left;
-
-            BottomEdges.push_back(std::move(pEdge_bottom));
-        }
-    });
-
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
+    GetMonitorAreaInfo();
     hHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, NULL, 0);
 
     MSG msg;
@@ -474,7 +549,7 @@ void delTaskTrayIcon(HWND hWnd) noexcept
 //  WM_DESTROY  - 中止メッセージを表示して戻る
 //
 //
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) noexcept
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
     {
@@ -552,6 +627,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     else
                         CheckMenuItem(hTaskTrayMenu, ID_MENU_RELATIVE_MODE, MF_BYCOMMAND | MFS_UNCHECKED);
                 }
+
+                GetMonitorAreaInfo();
+
                 break;
 
             case ID_MENU_TASKBAR_AVOID_MODE:
@@ -562,7 +640,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         CheckMenuItem(hTaskTrayMenu, ID_MENU_TASKBAR_AVOID_MODE, MF_BYCOMMAND | MFS_CHECKED);
                     else
                         CheckMenuItem(hTaskTrayMenu, ID_MENU_TASKBAR_AVOID_MODE, MF_BYCOMMAND | MFS_UNCHECKED);
-                }               break;
+                }
+
+                GetMonitorAreaInfo();
+                break;
 
             case IDM_ABOUT:
                 DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
@@ -575,6 +656,18 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         break;
+
+    case WM_MOUSEMOVE:
+    {   
+        UnhookWindowsHookEx(hHook);
+        Sleep(100);
+        SetCursorPos(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        Sleep(100);
+        hHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, NULL, 0);
+
+        break;
+    }
+
     case WM_PAINT:
         {
             PAINTSTRUCT ps;
@@ -584,6 +677,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             EndPaint(hWnd, &ps);
         }
         break;
+
     case WM_DESTROY:
         //終了時タスクトレイからIconを削除
         delTaskTrayIcon(hWnd);

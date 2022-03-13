@@ -1,7 +1,7 @@
 #pragma once
 
 #include "resource.h"
-
+#include <windowsx.h>
 #include "shellapi.h"
 #include "shellscalingapi.h"
 #include <vector>
@@ -39,3 +39,4 @@ BOOL CALLBACK InfoEnumProc(HMONITOR hMon, HDC hdcMon, gsl::not_null<LPRECT> lpMo
 
 void addTaskTrayIcon(HWND hWnd) noexcept;
 void delTaskTrayIcon(HWND hWnd) noexcept;
+void GetMonitorAreaInfo();
